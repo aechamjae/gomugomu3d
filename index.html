@@ -20,6 +20,24 @@
   #boot .title { font-size: 22px; font-weight: 700; letter-spacing: .04em; }
   #boot .sub { font-size: 13px; opacity: .6; }
   #boot.hidden { opacity: 0; pointer-events: none; }
+  #hud {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+    padding: max(10px, env(safe-area-inset-top)) 16px 0;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    font-family: system-ui, -apple-system, sans-serif; color: #eaf6ff;
+    text-shadow: 0 1px 3px rgba(0,0,0,.6);
+    pointer-events: none;
+  }
+  #hud .stat { font-size: 13px; opacity: .8; line-height: 1.4; }
+  #hud .stat .value { font-size: 22px; font-weight: 700; display: block; }
+  #status {
+    position: fixed; left: 50%; bottom: 14%; transform: translateX(-50%);
+    z-index: 5; text-align: center; font-family: system-ui, -apple-system, sans-serif;
+    color: #eaf6ff; text-shadow: 0 1px 3px rgba(0,0,0,.7); pointer-events: none;
+  }
+  #status .msg { font-size: 20px; font-weight: 700; }
+  #status .hint { font-size: 13px; opacity: .75; margin-top: 4px; }
+  #status:empty { display: none; }
 </style>
 <script type="importmap">
 { "imports": { "three": "./three.module.js" } }
@@ -27,10 +45,16 @@
 </head>
 <body>
 <div id="app"></div>
+<div id="hud">
+  <div class="stat">거리<span class="value" id="hud-distance">0m</span></div>
+  <div class="stat">보물<span class="value" id="hud-treasure">0</span></div>
+</div>
+<div id="status"></div>
 <div id="boot">
   <div class="title">고무팔 3D</div>
   <div class="sub">불러오는 중…</div>
 </div>
+<script src="physics.js"></script>
 <script type="module" src="render.js"></script>
 </body>
 </html>
