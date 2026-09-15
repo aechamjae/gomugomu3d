@@ -88,10 +88,46 @@ function updateSea(t) {
 }
 
 // ---- 플레이어 (M1: 최소한의 도형. 외형은 아직 미정 — section 12) ----
-const player = new THREE.Mesh(
-  new THREE.SphereGeometry(Physics.PLAYER_RADIUS, 20, 16),
-  new THREE.MeshStandardMaterial({ color: 0xff5a3c, roughness: 0.5 })
-);
+// 특정 작품의 캐릭터를 그대로 옮기지 않는다(기획 문서 1절) — "고무처럼
+// 늘어나는 팔을 쓰는 해적"이라는 컨셉만 가져온 범용 실루엣.
+const player = new THREE.Group();
+{
+  const R = Physics.PLAYER_RADIUS;
+  const vestMat = new THREE.MeshStandardMaterial({ color: 0xd23b2e, roughness: 0.55 });
+  const skinMat = new THREE.MeshStandardMaterial({ color: 0xffc98e, roughness: 0.6 });
+  const shortsMat = new THREE.MeshStandardMaterial({ color: 0x2b3a67, roughness: 0.8 });
+  const hatMat = new THREE.MeshStandardMaterial({ color: 0xe4c878, roughness: 0.9 });
+
+  const torso = new THREE.Mesh(new THREE.SphereGeometry(R * 0.85, 14, 12), vestMat);
+  torso.scale.set(1, 1.15, 1);
+  player.add(torso);
+
+  const shorts = new THREE.Mesh(new THREE.SphereGeometry(R * 0.78, 12, 10), shortsMat);
+  shorts.scale.set(1, 0.5, 1);
+  shorts.position.y = -R * 0.65;
+  player.add(shorts);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(R * 0.62, 14, 12), skinMat);
+  head.position.y = R * 1.05;
+  player.add(head);
+
+  const hatBrim = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.95, R * 0.95, R * 0.12, 14), hatMat);
+  hatBrim.position.y = R * 1.32;
+  player.add(hatBrim);
+  const hatTop = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.5, R * 0.62, R * 0.55, 14), hatMat);
+  hatTop.position.y = R * 1.32 + R * 0.33;
+  player.add(hatTop);
+
+  const armGeo = new THREE.CapsuleGeometry(R * 0.18, R * 0.5, 4, 8);
+  const armL = new THREE.Mesh(armGeo, skinMat);
+  armL.position.set(0, R * 0.05, R * 0.78);
+  armL.rotation.x = Math.PI / 2.3;
+  player.add(armL);
+  const armR = new THREE.Mesh(armGeo, skinMat);
+  armR.position.set(0, R * 0.05, -R * 0.78);
+  armR.rotation.x = -Math.PI / 2.3;
+  player.add(armR);
+}
 scene.add(player);
 
 // ---- 고리 (돛대/바위) — 코드로 생성한 지오메트리만 사용 ----
@@ -114,8 +150,12 @@ function buildRingMesh(ring) {
     crossbar.position.y = ring.y - 0.6;
     group.add(crossbar);
   } else {
-    const rock = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.6, poleHeight + 3, 7), poleMat);
-    rock.position.y = (poleHeight - 3) / 2;
+    // 꼭대기를 고리 반지름(0.55)보다 가늘게 좁혀서 걸쇠가 바위에 파묻히지
+    // 않고 마스트처럼 도드라져 보이게 한다 — 안 그러면 "저건 그냥 장애물인가"
+    // 싶은 모양이 됨 (실제 플레이 피드백으로 발견).
+    const rockHeight = poleHeight + 3;
+    const rock = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 1.6, rockHeight, 7), poleMat);
+    rock.position.y = poleHeight - rockHeight / 2;
     rock.rotation.y = ring.id * 0.7; // 회전을 섞어 하나만 복제한 티가 덜 나게
     group.add(rock);
   }
@@ -171,6 +211,9 @@ const input = { left: false, right: false, down: false, up: false, rightDir: nul
 const KEY_MAP = { ArrowLeft: 'left', ArrowRight: 'right', ArrowDown: 'down', ArrowUp: 'up' };
 
 function attemptAttach() {
+  // 죽은 상태에서 Space/클릭/터치로 바로 다시 시작 — R키만 따로 있는 건
+  // 흐름이 끊기고 터치에서는 대응할 키가 없음 (실제 플레이 피드백).
+  if (game.state === 'dead') { restart(); return; }
   if (game.state !== 'falling') return;
   camera.getWorldDirection(camForward);
   const target = Physics.pickTarget(game, { x: camForward.x, y: camForward.y, z: camForward.z });
@@ -198,6 +241,8 @@ window.addEventListener('keyup', (e) => {
 });
 window.addEventListener('mousedown', attemptAttach);
 window.addEventListener('mouseup', attemptRelease);
+window.addEventListener('touchstart', (e) => { attemptAttach(); e.preventDefault(); }, { passive: false });
+window.addEventListener('touchend', (e) => { attemptRelease(); e.preventDefault(); }, { passive: false });
 window.addEventListener('blur', () => {
   input.left = input.right = input.down = input.up = false;
   attemptRelease();
@@ -221,7 +266,7 @@ function updateHud() {
   hudDistance.textContent = Math.max(0, Math.round(game.distance)) + 'm';
   hudTreasure.textContent = String(game.treasure);
   if (game.state === 'dead') {
-    statusEl.innerHTML = '<div class="msg">풍덩!</div><div class="hint">R 키로 다시 시작 · Space/클릭으로 팔 걸기</div>';
+    statusEl.innerHTML = '<div class="msg">풍덩!</div><div class="hint">Space/클릭/터치로 다시 시작</div>';
   }
 }
 
@@ -239,6 +284,19 @@ const FOV_MAX = 75;
 const camPos = new THREE.Vector3(-CAM_BACK, CAM_UP, 0);
 const camLook = new THREE.Vector3(CAM_LOOK_AHEAD, 0, 0);
 camera.position.copy(camPos);
+
+// 마우스로 카메라를 좌우 ±20° 둘러보기 (포인터 락 없음, 설계 문서 2.4).
+// 이게 없으면 화면 중앙에서 벗어난 고리는 조준 원뿔에 아예 안 걸려서
+// 다음 고리로 못 넘어가는 문제가 있었음 (실제 플레이 피드백).
+const MAX_LOOK_YAW = 20 * Math.PI / 180;
+let lookYaw = 0;
+window.addEventListener('mousemove', (e) => {
+  const nx = Physics.clamp((e.clientX / window.innerWidth) * 2 - 1, -1, 1);
+  lookYaw = nx * MAX_LOOK_YAW;
+});
+const yawedLook = new THREE.Vector3();
+const lookOffset = new THREE.Vector3();
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
 function updateCamera(dt) {
   const p = game.player.pos;
@@ -267,7 +325,10 @@ function updateCamera(dt) {
 
   camera.up.set(0, 1, 0);
   camera.position.copy(camPos);
-  camera.lookAt(camLook);
+  lookOffset.subVectors(camLook, camPos);
+  lookOffset.applyAxisAngle(WORLD_UP, lookYaw);
+  yawedLook.addVectors(camPos, lookOffset);
+  camera.lookAt(yawedLook);
 
   const targetFov = THREE.MathUtils.lerp(FOV_MIN, FOV_MAX, speedT);
   if (Math.abs(camera.fov - targetFov) > 0.05) {

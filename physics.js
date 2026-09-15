@@ -98,7 +98,12 @@
     const wobble = (game.rng() * 2 - 1) * 2.2;
     const height = baseHeight * 0.68 + prev.y * 0.32 + wobble;
     const x = prev.x + spacing;
-    const z = (game.rng() * 2 - 1) * RING_LANE_HALF_WIDTH;
+    // 좌우 폭도 t로 갈수록 넓어지게 — 초반부터 ±18m 전체를 쓰면 마우스
+    // 룩(±20°)+조준 원뿔(35°)로도 다음 고리를 못 잡는 경우가 많았음
+    // (실제 플레이 피드백). 초반엔 이전 고리 z 근처로 완만하게 좁힌다.
+    const zSpread = 6 + t * (RING_LANE_HALF_WIDTH - 6);
+    let z = prev.z + (game.rng() * 2 - 1) * zSpread;
+    z = clamp(z, -RING_LANE_HALF_WIDTH, RING_LANE_HALF_WIDTH);
     const kind = game.rng() < 0.62 ? 'mast' : 'rock';
     game.rings.push({ id: nextRingId++, x, y: Math.max(4, height), z, kind });
   }
