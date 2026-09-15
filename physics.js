@@ -38,6 +38,13 @@
   const LANE_SOFT_PUSH = 40;   // m/s^2, 항로 밖으로 나갔을 때 되미는 가속도
   const PLAYER_RADIUS = 0.6;   // m
 
+  // ZIP(2.09m)까지 수동으로 감을 때의 속도. 설계 문서는 하한값만 주고 속도는
+  // 안 줘서, REEL(자동 감기)의 3배로 임시로 잡음 — 느낌 확인 후 조정 필요.
+  const ZIP_REEL = REEL * 3;
+  // ↑로 "도약하며 놓기"할 때 얹어주는 수직 속도. 설계 문서에 수치가 없어
+  // 임시로 잡은 값 — 느낌 확인 후 조정 필요.
+  const JUMP_BOOST = 14;
+
   const AIM_CONE_DEG = 35;                                  // 조준 원뿔 반각
   const AIM_CONE_COS = Math.cos(AIM_CONE_DEG * Math.PI / 180);
   const AIM_WEIGHT_ANGLE = 0.6;
@@ -140,11 +147,13 @@
     return true;
   }
 
-  function release(game) {
+  // boost: 선택적 {x,y,z} — "도약하며 놓기"(↑)처럼 놓는 순간 속도에 더해줄 값
+  function release(game, boost) {
     if (game.state === 'swinging') {
       game.state = 'falling';
       game.anchor = null;
       game.rest = 0;
+      if (boost) game.player.vel = vecAdd(game.player.vel, boost);
     }
   }
 
@@ -171,8 +180,10 @@
     };
   }
 
-  // input: { left, right, down, up } — 불리언. 좌우는 호출부(렌더러)가
-  // 카메라 기준으로 이미 부호를 정해 넘겨준다. (펌핑/급강하는 M3에서 사용)
+  // input: { left, right, down, up, rightDir } — left/right/down/up은 불리언.
+  // rightDir은 {x,y,z} — 카메라의 "오른쪽" 방향(월드 좌표). 펌핑은 이 방향을
+  // 밧줄에 수직으로 투영해 접선 방향을 구하므로 렌더러가 매 프레임 넘겨줘야
+  // 한다 (3.3절: "방향키는 카메라 기준 좌우로 해석").
   function step(game, dt, input) {
     input = input || {};
     dt = clamp(dt, 0, MAX_DT);
@@ -197,6 +208,16 @@
       const len = vecLen(toAnchor);
       if (len > 1e-6) {
         const dir = vecScale(toAnchor, 1 / len);
+
+        // 펌핑: 밧줄과 수직인 접선 방향으로만 힘을 준다 (지름 방향 성분은 제거)
+        if ((input.left || input.right) && input.rightDir) {
+          const rd = input.rightDir;
+          const rdRadial = vecDot(rd, dir);
+          const tangent = vecNorm(vecSub(rd, vecScale(dir, rdRadial)));
+          const sign = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+          p.vel = vecAdd(p.vel, vecScale(tangent, PUMP * sign * dt));
+        }
+
         const ext = len - game.rest;
         if (ext > 0) {
           const k = K1 + K2 * ext;
@@ -209,8 +230,13 @@
         }
       }
 
-      // 자동 감기 — REEL_MIN 밑으로는 절대 안 줄어든다 (2D 버그 #2 재현 금지)
-      game.rest = Math.max(REEL_MIN, game.rest - REEL * dt);
+      // 감기 — ↓를 누르고 있으면 ZIP까지, 아니면 REEL_MIN까지만
+      // (REEL_MIN 밑으로 자동으로는 절대 안 줄어든다 — 2D 버그 #2 재현 금지)
+      if (input.down) {
+        game.rest = Math.max(ZIP, game.rest - ZIP_REEL * dt);
+      } else {
+        game.rest = Math.max(REEL_MIN, game.rest - REEL * dt);
+      }
     }
 
     const speed = vecLen(p.vel);
@@ -254,6 +280,7 @@
 
   return {
     GRAV, MAXV, AIR, PUMP, DIVE, REACH, REEL_MIN, ZIP, STRETCH, K1, K2, DAMP, REEL,
+    ZIP_REEL, JUMP_BOOST,
     LANE_HALF_WIDTH, RING_LANE_HALF_WIDTH, PLAYER_RADIUS, MAX_DT, AIM_CONE_DEG,
     vecAdd, vecSub, vecScale, vecLen, vecNorm, vecDot, clamp, makeRng,
     pickTarget, tryAttach, release,

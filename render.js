@@ -164,9 +164,10 @@ arm.visible = false;
 scene.add(arm);
 
 const camForward = new THREE.Vector3();
+const camRight = new THREE.Vector3();
 
 // ---- 입력 ----
-const input = { left: false, right: false, down: false, up: false };
+const input = { left: false, right: false, down: false, up: false, rightDir: null };
 const KEY_MAP = { ArrowLeft: 'left', ArrowRight: 'right', ArrowDown: 'down', ArrowUp: 'up' };
 
 function attemptAttach() {
@@ -178,11 +179,18 @@ function attemptAttach() {
 function attemptRelease() {
   Physics.release(game);
 }
+// ↑: 매달린 동안엔 위로 튀어오르며 놓기. 공중에서는 아직 배정된 동작 없음.
+function attemptJumpRelease() {
+  if (game.state === 'swinging') {
+    Physics.release(game, { x: 0, y: Physics.JUMP_BOOST, z: 0 });
+  }
+}
 
 window.addEventListener('keydown', (e) => {
   if (KEY_MAP[e.key]) { input[KEY_MAP[e.key]] = true; e.preventDefault(); }
   if (e.key === 'r' || e.key === 'R') restart();
   if (e.code === 'Space') { attemptAttach(); e.preventDefault(); }
+  if (e.key === 'ArrowUp') attemptJumpRelease();
 });
 window.addEventListener('keyup', (e) => {
   if (KEY_MAP[e.key]) { input[KEY_MAP[e.key]] = false; e.preventDefault(); }
@@ -301,6 +309,10 @@ function animate() {
     accumulator += rawDt;
   }
   const frameDt = Math.min(rawDt, FIXED_DT * MAX_STEPS_PER_FRAME);
+
+  // 펌핑용 "카메라 오른쪽" 방향 — 매달린 동안 매 프레임 갱신
+  camRight.setFromMatrixColumn(camera.matrixWorld, 0);
+  input.rightDir = { x: camRight.x, y: camRight.y, z: camRight.z };
 
   let steps = 0;
   while (accumulator >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
