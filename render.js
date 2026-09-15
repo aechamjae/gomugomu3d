@@ -1,5 +1,4 @@
 // render.js — three.js 씬 구성, 메시 생성, 그리기 전담.
-// M0: 바다 · 하늘 · 빛만 있는 빈 씬.
 import * as THREE from 'three';
 
 const app = document.getElementById('app');
@@ -95,29 +94,118 @@ const player = new THREE.Mesh(
 );
 scene.add(player);
 
+// ---- 고리 (돛대/바위) — 코드로 생성한 지오메트리만 사용 ----
+const ringMeshes = new Map(); // ring.id -> THREE.Group
+
+function buildRingMesh(ring) {
+  const group = new THREE.Group();
+  const isMast = ring.kind === 'mast';
+  const poleHeight = ring.y + 1.5;
+  const poleMat = new THREE.MeshStandardMaterial({
+    color: isMast ? 0x6b4a30 : 0x6b6f73,
+    roughness: isMast ? 0.8 : 0.95,
+  });
+
+  if (isMast) {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, poleHeight, 8), poleMat);
+    pole.position.y = poleHeight / 2;
+    group.add(pole);
+    const crossbar = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.18, 0.18), poleMat);
+    crossbar.position.y = ring.y - 0.6;
+    group.add(crossbar);
+  } else {
+    const rock = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.6, poleHeight + 3, 7), poleMat);
+    rock.position.y = (poleHeight - 3) / 2;
+    rock.rotation.y = ring.id * 0.7; // 회전을 섞어 하나만 복제한 티가 덜 나게
+    group.add(rock);
+  }
+
+  const hook = new THREE.Mesh(
+    new THREE.TorusGeometry(0.55, 0.09, 8, 16),
+    new THREE.MeshStandardMaterial({ color: 0xffcf4d, metalness: 0.3, roughness: 0.4 })
+  );
+  hook.position.y = ring.y;
+  hook.rotation.y = Math.PI / 2;
+  group.add(hook);
+
+  group.position.set(ring.x, 0, ring.z);
+  return group;
+}
+
+function syncRingMeshes() {
+  const liveIds = new Set();
+  for (const ring of game.rings) {
+    liveIds.add(ring.id);
+    if (!ringMeshes.has(ring.id)) {
+      const mesh = buildRingMesh(ring);
+      ringMeshes.set(ring.id, mesh);
+      scene.add(mesh);
+    }
+  }
+  for (const [id, mesh] of ringMeshes) {
+    if (!liveIds.has(id)) {
+      scene.remove(mesh);
+      ringMeshes.delete(id);
+    }
+  }
+}
+
+// ---- 조준 마커 & 팔(줄) ----
+const aimMarker = new THREE.Mesh(
+  new THREE.TorusGeometry(0.9, 0.07, 8, 20),
+  new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 })
+);
+aimMarker.visible = false;
+scene.add(aimMarker);
+
+const armGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+const arm = new THREE.Line(armGeo, new THREE.LineBasicMaterial({ color: 0xfff2d9, linewidth: 2 }));
+arm.visible = false;
+scene.add(arm);
+
+const camForward = new THREE.Vector3();
+
 // ---- 입력 ----
 const input = { left: false, right: false, down: false, up: false };
 const KEY_MAP = { ArrowLeft: 'left', ArrowRight: 'right', ArrowDown: 'down', ArrowUp: 'up' };
+
+function attemptAttach() {
+  if (game.state !== 'falling') return;
+  camera.getWorldDirection(camForward);
+  const target = Physics.pickTarget(game, { x: camForward.x, y: camForward.y, z: camForward.z });
+  if (target) Physics.tryAttach(game, target);
+}
+function attemptRelease() {
+  Physics.release(game);
+}
+
 window.addEventListener('keydown', (e) => {
   if (KEY_MAP[e.key]) { input[KEY_MAP[e.key]] = true; e.preventDefault(); }
   if (e.key === 'r' || e.key === 'R') restart();
+  if (e.code === 'Space') { attemptAttach(); e.preventDefault(); }
 });
 window.addEventListener('keyup', (e) => {
   if (KEY_MAP[e.key]) { input[KEY_MAP[e.key]] = false; e.preventDefault(); }
+  if (e.code === 'Space') attemptRelease();
 });
+window.addEventListener('mousedown', attemptAttach);
+window.addEventListener('mouseup', attemptRelease);
 window.addEventListener('blur', () => {
   input.left = input.right = input.down = input.up = false;
+  attemptRelease();
 });
 
 // ---- 게임 상태 ----
-let game = Physics.createGame({ startY: 20 });
+let game = Physics.createGame({});
 
 const hudDistance = document.getElementById('hud-distance');
 const hudTreasure = document.getElementById('hud-treasure');
 const statusEl = document.getElementById('status');
 
 function restart() {
-  game = Physics.createGame({ startY: 20 });
+  for (const mesh of ringMeshes.values()) scene.remove(mesh);
+  ringMeshes.clear();
+  game = Physics.createGame({});
   statusEl.innerHTML = '';
 }
 
@@ -125,7 +213,7 @@ function updateHud() {
   hudDistance.textContent = Math.max(0, Math.round(game.distance)) + 'm';
   hudTreasure.textContent = String(game.treasure);
   if (game.state === 'dead') {
-    statusEl.innerHTML = '<div class="msg">풍덩!</div><div class="hint">R 키로 다시 시작</div>';
+    statusEl.innerHTML = '<div class="msg">풍덩!</div><div class="hint">R 키로 다시 시작 · Space/클릭으로 팔 걸기</div>';
   }
 }
 
@@ -151,7 +239,18 @@ function updateCamera(dt) {
 
   const back = CAM_BACK + speedT * 4; // 빠를수록 더 멀리
   const desiredPos = { x: p.x - back, y: p.y + CAM_UP, z: p.z };
-  const desiredLook = { x: p.x + CAM_LOOK_AHEAD, y: p.y, z: p.z };
+  let desiredLook = { x: p.x + CAM_LOOK_AHEAD, y: p.y, z: p.z };
+
+  // 고리에 매달린 동안엔 고리가 화면 안에 들어오도록 주시점을 플레이어-고리
+  // 중간쯤으로 옮긴다 (설계 문서 2.3-6).
+  if (game.state === 'swinging' && game.anchor) {
+    const a = game.anchor;
+    desiredLook = {
+      x: (p.x + a.x) / 2,
+      y: (p.y + a.y) / 2,
+      z: (p.z + a.z) / 2,
+    };
+  }
 
   // 지수 감쇠를 프레임 레이트에 무관하게: factor = 1-(1-rate)^(dt*60)
   const factor = 1 - Math.pow(1 - CAM_FOLLOW_RATE, dt * 60);
@@ -190,10 +289,19 @@ let accumulator = 0;
 
 function animate() {
   requestAnimationFrame(animate);
-  const frameDt = Math.min(clock.getDelta(), MAX_FRAME_DT);
+  const rawDt = clock.getDelta();
   const t = clock.getElapsedTime();
 
-  accumulator += frameDt;
+  if (rawDt > MAX_FRAME_DT) {
+    // 큰 정지(최초 로드의 셰이더 컴파일, 탭 백그라운드 복귀 등) — 밀린 시간을
+    // 몰아서 재생(fast-forward)하면 입력할 틈도 없이 게임이 먼저 진행돼
+    // 버린다. 대신 그 시간은 버리고 지금부터 다시 시작한다.
+    accumulator = 0;
+  } else {
+    accumulator += rawDt;
+  }
+  const frameDt = Math.min(rawDt, FIXED_DT * MAX_STEPS_PER_FRAME);
+
   let steps = 0;
   while (accumulator >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
     Physics.step(game, FIXED_DT, input);
@@ -202,6 +310,31 @@ function animate() {
   }
 
   player.position.set(game.player.pos.x, game.player.pos.y, game.player.pos.z);
+  syncRingMeshes();
+
+  if (game.state === 'falling') {
+    camera.getWorldDirection(camForward);
+    const target = Physics.pickTarget(game, { x: camForward.x, y: camForward.y, z: camForward.z });
+    if (target) {
+      aimMarker.visible = true;
+      aimMarker.position.set(target.x, target.y, target.z);
+      aimMarker.rotation.y = Math.PI / 2;
+    } else {
+      aimMarker.visible = false;
+    }
+    arm.visible = false;
+  } else if (game.state === 'swinging' && game.anchor) {
+    aimMarker.visible = false;
+    arm.visible = true;
+    const positions = arm.geometry.attributes.position;
+    positions.setXYZ(0, game.player.pos.x, game.player.pos.y, game.player.pos.z);
+    positions.setXYZ(1, game.anchor.x, game.anchor.y, game.anchor.z);
+    positions.needsUpdate = true;
+  } else {
+    aimMarker.visible = false;
+    arm.visible = false;
+  }
+
   updateCamera(frameDt);
   updateSea(t);
   updateHud();
