@@ -36,6 +36,8 @@
     color: #eaf6ff; text-shadow: 0 1px 3px rgba(0,0,0,.7); pointer-events: none;
   }
   #status .msg { font-size: 20px; font-weight: 700; }
+  #status .msg.warn { color: #ff6b5e; animation: warn-pulse 0.6s ease-in-out infinite alternate; }
+  @keyframes warn-pulse { from { opacity: .7; } to { opacity: 1; } }
   #status .hint { font-size: 13px; opacity: .75; margin-top: 4px; }
   #status:empty { display: none; }
 
@@ -88,7 +90,7 @@
     <button type="button" class="touch-btn" id="btn-right" aria-label="오른쪽">▶</button>
   </div>
   <div class="touch-pad" id="touch-pad-right" style="flex-direction: column;">
-    <button type="button" class="touch-btn" id="btn-up" aria-label="도약">▲</button>
+    <button type="button" class="touch-btn" id="btn-up" aria-label="전진 가속">▲</button>
     <button type="button" class="touch-btn" id="btn-grab" aria-label="고무팔">팔</button>
   </div>
 </div>

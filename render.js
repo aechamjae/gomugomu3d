@@ -279,6 +279,68 @@ function syncShipMeshes() {
   }
 }
 
+// ---- 식인 물고기 — 즉사 아님, 스치면 가볍게 휘청 (5절) ----
+const fishMeshes = new Map(); // fish.id -> THREE.Group
+const fishMat = new THREE.MeshStandardMaterial({ color: 0x8fa6ad, roughness: 0.5, metalness: 0.2 });
+
+function buildFishMesh() {
+  const group = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.ConeGeometry(0.4, 1.3, 8), fishMat);
+  body.rotation.z = -Math.PI / 2;
+  group.add(body);
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.5, 6), fishMat);
+  tail.rotation.z = Math.PI / 2;
+  tail.position.x = 0.85;
+  group.add(tail);
+  return group;
+}
+
+function syncFishMeshes(t) {
+  const liveIds = new Set();
+  for (const fish of game.fish) {
+    liveIds.add(fish.id);
+    let mesh = fishMeshes.get(fish.id);
+    if (!mesh) {
+      mesh = buildFishMesh();
+      fishMeshes.set(fish.id, mesh);
+      scene.add(mesh);
+    }
+    mesh.position.set(fish.x, fish.y + Math.sin(t * 3 + fish.id) * 0.25, fish.z);
+    mesh.rotation.y = Math.sin(t * 2 + fish.id) * 0.4;
+  }
+  for (const [id, mesh] of fishMeshes) {
+    if (!liveIds.has(id)) {
+      scene.remove(mesh);
+      fishMeshes.delete(id);
+    }
+  }
+}
+
+// ---- 해왕류 — 경고 → 솟구침 → 닿으면 즉사 (5절) ----
+const monsterMat = new THREE.MeshStandardMaterial({ color: 0x1f3d2b, roughness: 0.7 });
+const monsterGroup = new THREE.Group();
+const monsterNeck = new THREE.Mesh(
+  new THREE.CylinderGeometry(Physics.MONSTER_NECK_RADIUS * 0.55, Physics.MONSTER_NECK_RADIUS, Physics.MONSTER_HEIGHT, 10),
+  monsterMat
+);
+monsterNeck.position.y = Physics.MONSTER_HEIGHT / 2;
+monsterGroup.add(monsterNeck);
+const monsterHead = new THREE.Mesh(new THREE.SphereGeometry(Physics.MONSTER_NECK_RADIUS * 0.7, 12, 10), monsterMat);
+monsterHead.position.y = Physics.MONSTER_HEIGHT;
+monsterGroup.add(monsterHead);
+monsterGroup.visible = false;
+scene.add(monsterGroup);
+
+function updateMonster() {
+  const m = game.monster;
+  if (!m || !m.risen) {
+    monsterGroup.visible = false;
+    return;
+  }
+  monsterGroup.visible = true;
+  monsterGroup.position.set(m.x, 0, m.z);
+}
+
 // ---- 조준 마커 & 팔(줄) ----
 const aimMarker = new THREE.Mesh(
   new THREE.TorusGeometry(0.9, 0.07, 8, 20),
@@ -311,18 +373,11 @@ function attemptAttach() {
 function attemptRelease() {
   Physics.release(game);
 }
-// ↑: 매달린 동안엔 위로 튀어오르며 놓기. 공중에서는 아직 배정된 동작 없음.
-function attemptJumpRelease() {
-  if (game.state === 'swinging') {
-    Physics.release(game, { x: 0, y: Physics.JUMP_BOOST, z: 0 });
-  }
-}
 
 window.addEventListener('keydown', (e) => {
   if (KEY_MAP[e.key]) { input[KEY_MAP[e.key]] = true; e.preventDefault(); }
   if (e.key === 'r' || e.key === 'R') restart();
   if (e.code === 'Space') { attemptAttach(); e.preventDefault(); }
-  if (e.key === 'ArrowUp') attemptJumpRelease();
 });
 window.addEventListener('keyup', (e) => {
   if (KEY_MAP[e.key]) { input[KEY_MAP[e.key]] = false; e.preventDefault(); }
@@ -362,7 +417,7 @@ window.addEventListener('touchmove', (e) => {
     if (t.identifier === lookTouchId) {
       const dx = t.clientX - lookLastX;
       lookLastX = t.clientX;
-      lookYaw = Physics.clamp(lookYaw + dx * TOUCH_LOOK_SENSITIVITY, -MAX_LOOK_YAW, MAX_LOOK_YAW);
+      lookYawTarget = Physics.clamp(lookYawTarget + dx * TOUCH_LOOK_SENSITIVITY, -MAX_LOOK_YAW, MAX_LOOK_YAW);
     }
   }
   e.preventDefault();
@@ -374,7 +429,7 @@ window.addEventListener('touchend', (e) => {
   }
 }, { passive: false });
 
-// ---- 터치 버튼: 홀드형(D패드/고무팔)과 1회성(도약) ----
+// ---- 터치 버튼: 전부 홀드형 (누르는 동안 입력, 떼면 해제) ----
 function bindHoldButton(el, onDown, onUp) {
   if (!el) return;
   const down = (e) => { e.preventDefault(); e.stopPropagation(); onDown(); };
@@ -390,7 +445,7 @@ function bindHoldButton(el, onDown, onUp) {
 bindHoldButton(document.getElementById('btn-left'), () => { input.left = true; }, () => { input.left = false; });
 bindHoldButton(document.getElementById('btn-right'), () => { input.right = true; }, () => { input.right = false; });
 bindHoldButton(document.getElementById('btn-down'), () => { input.down = true; }, () => { input.down = false; });
-bindHoldButton(document.getElementById('btn-up'), () => attemptJumpRelease(), () => {});
+bindHoldButton(document.getElementById('btn-up'), () => { input.up = true; }, () => { input.up = false; });
 bindHoldButton(document.getElementById('btn-grab'), attemptAttach, attemptRelease);
 
 // 터치 기기 판별 — 둘 중 하나만 보고 판단하면 외장 키보드가 붙은
@@ -417,7 +472,12 @@ function updateHud() {
   hudDistance.textContent = Math.max(0, Math.round(game.distance)) + 'm';
   hudTreasure.textContent = String(game.treasure);
   if (game.state === 'dead') {
-    statusEl.innerHTML = '<div class="msg">풍덩!</div><div class="hint">Space/클릭/터치로 다시 시작</div>';
+    const msg = game.deathReason === 'monster' ? '해왕류에게 붙잡혔다!' : '풍덩!';
+    statusEl.innerHTML = `<div class="msg">${msg}</div><div class="hint">Space/클릭/터치로 다시 시작</div>`;
+  } else if (game.monster && game.monster.warned && !game.monster.risen) {
+    statusEl.innerHTML = '<div class="msg warn">전방에 해왕류 출현!</div>';
+  } else {
+    statusEl.innerHTML = '';
   }
 }
 
@@ -440,10 +500,13 @@ camera.position.copy(camPos);
 // 이게 없으면 화면 중앙에서 벗어난 고리는 조준 원뿔에 아예 안 걸려서
 // 다음 고리로 못 넘어가는 문제가 있었음 (실제 플레이 피드백).
 const MAX_LOOK_YAW = 20 * Math.PI / 180;
-let lookYaw = 0;
+let lookYawTarget = 0; // 입력이 곧바로 반영되는 목표값
+let lookYaw = 0;       // 실제 카메라에 적용되는, 매 프레임 목표값을 향해 부드럽게 따라가는 값
+const LOOK_YAW_SMOOTH_RATE = 0.15; // 60fps 기준 프레임당 보간 비율 — 마우스가 살짝만
+                                    // 움직여도 시점이 툭툭 꺾이던 것을 완화 (실제 플레이 피드백)
 window.addEventListener('mousemove', (e) => {
   const nx = Physics.clamp((e.clientX / window.innerWidth) * 2 - 1, -1, 1);
-  lookYaw = nx * MAX_LOOK_YAW;
+  lookYawTarget = nx * MAX_LOOK_YAW;
 });
 const yawedLook = new THREE.Vector3();
 const lookOffset = new THREE.Vector3();
@@ -474,6 +537,11 @@ function updateCamera(dt) {
   camPos.lerp(new THREE.Vector3(desiredPos.x, desiredPos.y, desiredPos.z), factor);
   camLook.lerp(new THREE.Vector3(desiredLook.x, desiredLook.y, desiredLook.z), factor);
 
+  // 마우스/터치로 정한 목표 각도를 그대로 적용하면 살짝만 움직여도 시점이
+  // 툭 꺾여서 "부자연스럽다"는 피드백이 있었음 — 여기도 지수 감쇠로 완화.
+  const yawFactor = 1 - Math.pow(1 - LOOK_YAW_SMOOTH_RATE, dt * 60);
+  lookYaw += (lookYawTarget - lookYaw) * yawFactor;
+
   camera.up.set(0, 1, 0);
   camera.position.copy(camPos);
   lookOffset.subVectors(camLook, camPos);
@@ -481,11 +549,11 @@ function updateCamera(dt) {
   yawedLook.addVectors(camPos, lookOffset);
   camera.lookAt(yawedLook);
 
+  // FOV도 즉시 바꾸면 속도가 오르내릴 때마다(스프링 진동 등) 화면이
+  // 깜빡이듯 확대·축소되는 느낌이 나서 같은 방식으로 부드럽게 따라가게 함.
   const targetFov = THREE.MathUtils.lerp(FOV_MIN, FOV_MAX, speedT);
-  if (Math.abs(camera.fov - targetFov) > 0.05) {
-    camera.fov = targetFov;
-    camera.updateProjectionMatrix();
-  }
+  camera.fov += (targetFov - camera.fov) * factor;
+  camera.updateProjectionMatrix();
 }
 
 // ---- 리사이즈 ----
@@ -537,6 +605,8 @@ function animate() {
   syncRingMeshes();
   syncCoinMeshes();
   syncShipMeshes();
+  syncFishMeshes(t);
+  updateMonster();
   updateCoinSpin(t);
 
   if (game.state === 'falling') {

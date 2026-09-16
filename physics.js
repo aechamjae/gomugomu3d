@@ -41,14 +41,35 @@
   // ZIP(2.09m)까지 수동으로 감을 때의 속도. 설계 문서는 하한값만 주고 속도는
   // 안 줘서, REEL(자동 감기)의 3배로 임시로 잡음 — 느낌 확인 후 조정 필요.
   const ZIP_REEL = REEL * 3;
-  // ↑로 "도약하며 놓기"할 때 얹어주는 수직 속도. 설계 문서에 수치가 없어
-  // 임시로 잡은 값 — 느낌 확인 후 조정 필요.
-  const JUMP_BOOST = 14;
+  // ↑ 를 "도약하며 놓기" 대신 전진 가속으로 바꿔달라는 요청으로 교체.
+  // 설계 문서엔 없던 조작이라 수치는 임시 — AIR(공중 조작)와 같은 크기로 시작.
+  const FORWARD_ACCEL = AIR;
+
+  // 돛대/바위 기둥에 부딪히면 통과하지 못하게 막는 원기둥 충돌 반경.
+  // 시각 지오메트리(render.js)의 대략적인 굵기에 맞춘 값.
+  const PILLAR_RADIUS = { mast: 0.4, rock: 1.1 };
 
   const AIM_CONE_DEG = 35;                                  // 조준 원뿔 반각
   const AIM_CONE_COS = Math.cos(AIM_CONE_DEG * Math.PI / 180);
   const AIM_WEIGHT_ANGLE = 0.6;
   const AIM_WEIGHT_DIST = 0.4;
+
+  // ---- 잡몹 (설계 문서 5절) ----
+  const FISH_MIN_DISTANCE = 90;      // m, 이 이후부터 출현
+  const FISH_CHANCE_DISTANCE = 400;  // m, 확률이 바뀌는 기준
+  const FISH_CHANCE_EARLY = 0.20;
+  const FISH_CHANCE_LATE = 0.30;
+  const FISH_RADIUS = 0.8;
+  const FISH_STUN_DURATION = 20 / 60; // "스턴 20프레임" -> 초
+  const FISH_STUN_SPEED_MULT = 0.74;
+
+  const MONSTER_MIN_DISTANCE = 520;  // m, 이 이후부터 출현
+  const MONSTER_MIN_GAP = 118;       // m, 직전 출현 지점과의 최소 간격
+  const MONSTER_CHANCE = 0.11;
+  const MONSTER_WARN_AHEAD = 100;    // m, 이만큼 앞부터 경고 배너
+  const MONSTER_RISE_AHEAD = 12;     // m, 이만큼 앞에서 실제로 솟구침
+  const MONSTER_HEIGHT = 13.6;       // m, 해수면 위로 솟는 높이
+  const MONSTER_NECK_RADIUS = 2.4;   // m
 
   const RING_LOOKAHEAD = 24;   // m, 플레이어 앞쪽 이 거리 안이면 다음 고리를 미리 스폰
   const RING_DESPAWN_BEHIND = 30; // m, 플레이어보다 이만큼 뒤처지면 제거
@@ -81,6 +102,7 @@
   // ---- 고리 생성 (설계 문서 5절, 절차적 · 앞쪽으로 계속 채움) ----
   let nextRingId = 1;
   let nextCoinId = 1;
+  let nextFishId = 1;
   const COIN_PICKUP_RADIUS = 1.3; // m
 
   function spawnNextRing(game) {
@@ -119,6 +141,32 @@
         z: (prev.z + z) / 2,
       });
     }
+
+    // 식인 물고기 — 90m 이후. 400m 전엔 20%, 이후 30%. 1~3마리 떼 (5절)
+    if (game.distance > FISH_MIN_DISTANCE) {
+      const chance = game.distance < FISH_CHANCE_DISTANCE ? FISH_CHANCE_EARLY : FISH_CHANCE_LATE;
+      if (game.rng() < chance) {
+        const count = 1 + Math.floor(game.rng() * 3);
+        for (let i = 0; i < count; i++) {
+          game.fish.push({
+            id: nextFishId++,
+            x: (prev.x + x) / 2 + (game.rng() * 2 - 1) * 2.5,
+            y: 1 + game.rng() * 1.5,
+            z: (prev.z + z) / 2 + (game.rng() * 2 - 1) * 5,
+          });
+        }
+      }
+    }
+
+    // 해왕류 — 520m 이후, 직전 출현으로부터 118m 이상 떨어진 곳에서 11% (5절)
+    if (game.distance > MONSTER_MIN_DISTANCE && !game.monster) {
+      const gapOk = game.lastMonsterX == null || (x - game.lastMonsterX) > MONSTER_MIN_GAP;
+      if (gapOk && game.rng() < MONSTER_CHANCE) {
+        const mx = x + 20 + game.rng() * 10;
+        game.monster = { x: mx, z: (game.rng() * 2 - 1) * 10, risen: false, warned: false };
+        game.lastMonsterX = mx;
+      }
+    }
   }
 
   function ensureRingsAhead(game) {
@@ -131,8 +179,40 @@
     while (game.rings.length && game.rings[0].x < game.player.pos.x - RING_DESPAWN_BEHIND) {
       game.rings.shift();
     }
+    while (game.fish.length && game.fish[0].x < game.player.pos.x - RING_DESPAWN_BEHIND) {
+      game.fish.shift();
+    }
+    if (game.monster && game.monster.x < game.player.pos.x - RING_DESPAWN_BEHIND) {
+      game.monster = null;
+    }
     while (game.coins.length && game.coins[0].x < game.player.pos.x - RING_DESPAWN_BEHIND) {
       game.coins.shift();
+    }
+  }
+
+  // 돛대/바위를 그냥 통과하지 못하게 — 구(플레이어) vs 수직 원기둥(기둥) 충돌.
+  // 기둥은 바다 밑까지 이어진다고 보고 아래쪽 경계는 따로 두지 않는다.
+  function resolvePillarCollisions(game) {
+    const pos = game.player.pos;
+    const vel = game.player.vel;
+    for (let i = 0; i < game.rings.length; i++) {
+      const ring = game.rings[i];
+      if (pos.y > ring.y + 2) continue;
+      const r = (PILLAR_RADIUS[ring.kind] || 0.4) + PLAYER_RADIUS;
+      const dx = pos.x - ring.x;
+      const dz = pos.z - ring.z;
+      const distSq = dx * dx + dz * dz;
+      if (distSq >= r * r) continue;
+      const dist = Math.sqrt(distSq);
+      const nx = dist > 1e-6 ? dx / dist : 1;
+      const nz = dist > 1e-6 ? dz / dist : 0;
+      pos.x = ring.x + nx * r;
+      pos.z = ring.z + nz * r;
+      const vNormal = vel.x * nx + vel.z * nz;
+      if (vNormal < 0) {
+        vel.x -= vNormal * nx;
+        vel.z -= vNormal * nz;
+      }
     }
   }
 
@@ -144,6 +224,38 @@
       if (dx * dx + dy * dy + dz * dz <= COIN_PICKUP_RADIUS * COIN_PICKUP_RADIUS) {
         game.coins.splice(i, 1);
         game.treasure += 1;
+      }
+    }
+  }
+
+  // 즉사 아님 — 스턴(조작 20프레임 무시)과 속도 감소만
+  function resolveFishCollisions(game) {
+    const p = game.player.pos;
+    const rr = FISH_RADIUS + PLAYER_RADIUS;
+    for (let i = game.fish.length - 1; i >= 0; i--) {
+      const f = game.fish[i];
+      const dx = f.x - p.x, dy = f.y - p.y, dz = f.z - p.z;
+      if (dx * dx + dy * dy + dz * dz <= rr * rr) {
+        game.fish.splice(i, 1);
+        game.stunTimer = FISH_STUN_DURATION;
+        game.player.vel = vecScale(game.player.vel, FISH_STUN_SPEED_MULT);
+      }
+    }
+  }
+
+  // 경고 → 솟구침 → (닿으면) 즉사. 순서대로 판정.
+  function resolveMonster(game) {
+    const m = game.monster;
+    if (!m) return;
+    const p = game.player.pos;
+    const ahead = m.x - p.x;
+    m.warned = ahead <= MONSTER_WARN_AHEAD;
+    if (!m.risen && ahead <= MONSTER_RISE_AHEAD) m.risen = true;
+    if (m.risen) {
+      const dx = p.x - m.x, dz = p.z - m.z;
+      if (p.y <= MONSTER_HEIGHT && dx * dx + dz * dz <= MONSTER_NECK_RADIUS * MONSTER_NECK_RADIUS) {
+        game.state = 'dead';
+        game.deathReason = 'monster';
       }
     }
   }
@@ -205,6 +317,10 @@
       rng: makeRng(opts.seed != null ? opts.seed : 1),
       rings: [],
       coins: [],
+      fish: [],
+      monster: null,
+      lastMonsterX: null,
+      stunTimer: 0,
       anchor: null,
       rest: 0,
       player: {
@@ -228,14 +344,20 @@
 
     ensureRingsAhead(game);
     collectCoins(game);
+    resolveFishCollisions(game);
+    resolveMonster(game);
+    if (game.state === 'dead') return game;
+
+    if (game.stunTimer > 0) game.stunTimer = Math.max(0, game.stunTimer - dt);
+    const stunned = game.stunTimer > 0; // 식인 물고기에 맞으면 잠깐 조작 무시 (5절)
 
     const p = game.player;
 
     if (game.state === 'falling') {
       p.vel.y -= GRAV * dt;
-      if (input.left) p.vel.z -= AIR * dt;
-      if (input.right) p.vel.z += AIR * dt;
-      if (input.down) p.vel.y -= DIVE * dt;
+      if (!stunned && input.left) p.vel.z -= AIR * dt;
+      if (!stunned && input.right) p.vel.z += AIR * dt;
+      if (!stunned && input.down) p.vel.y -= DIVE * dt;
     } else if (game.state === 'swinging') {
       p.vel.y -= GRAV * dt;
 
@@ -245,7 +367,7 @@
         const dir = vecScale(toAnchor, 1 / len);
 
         // 펌핑: 밧줄과 수직인 접선 방향으로만 힘을 준다 (지름 방향 성분은 제거)
-        if ((input.left || input.right) && input.rightDir) {
+        if (!stunned && (input.left || input.right) && input.rightDir) {
           const rd = input.rightDir;
           const rdRadial = vecDot(rd, dir);
           const tangent = vecNorm(vecSub(rd, vecScale(dir, rdRadial)));
@@ -267,12 +389,16 @@
 
       // 감기 — ↓를 누르고 있으면 ZIP까지, 아니면 REEL_MIN까지만
       // (REEL_MIN 밑으로 자동으로는 절대 안 줄어든다 — 2D 버그 #2 재현 금지)
-      if (input.down) {
+      if (!stunned && input.down) {
         game.rest = Math.max(ZIP, game.rest - ZIP_REEL * dt);
       } else {
         game.rest = Math.max(REEL_MIN, game.rest - REEL * dt);
       }
     }
+
+    // ↑ 전진 가속 — 매달렸을 때/공중일 때 둘 다 적용 (요청으로 "도약하며
+    // 놓기"를 대체함)
+    if (!stunned && input.up) p.vel.x += FORWARD_ACCEL * dt;
 
     const speed = vecLen(p.vel);
     if (speed > MAXV) p.vel = vecScale(p.vel, MAXV / speed);
@@ -292,6 +418,8 @@
         }
       }
     }
+
+    resolvePillarCollisions(game);
 
     if (p.pos.z > LANE_HALF_WIDTH) {
       const over = p.pos.z - LANE_HALF_WIDTH;
@@ -315,8 +443,9 @@
 
   return {
     GRAV, MAXV, AIR, PUMP, DIVE, REACH, REEL_MIN, ZIP, STRETCH, K1, K2, DAMP, REEL,
-    ZIP_REEL, JUMP_BOOST,
+    ZIP_REEL, FORWARD_ACCEL, PILLAR_RADIUS,
     LANE_HALF_WIDTH, RING_LANE_HALF_WIDTH, PLAYER_RADIUS, MAX_DT, AIM_CONE_DEG,
+    FISH_RADIUS, MONSTER_HEIGHT, MONSTER_NECK_RADIUS, MONSTER_WARN_AHEAD, MONSTER_RISE_AHEAD,
     vecAdd, vecSub, vecScale, vecLen, vecNorm, vecDot, clamp, makeRng,
     pickTarget, tryAttach, release,
     createGame, step,
