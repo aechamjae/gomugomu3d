@@ -190,6 +190,95 @@ function syncRingMeshes() {
   }
 }
 
+// ---- 금화 (5절: 고리 사이 50% 확률) ----
+const coinMeshes = new Map(); // coin.id -> THREE.Mesh
+const coinGeo = new THREE.CylinderGeometry(0.45, 0.45, 0.12, 14);
+const coinMat = new THREE.MeshStandardMaterial({ color: 0xffd54a, metalness: 0.6, roughness: 0.3 });
+
+function syncCoinMeshes() {
+  const liveIds = new Set();
+  for (const coin of game.coins) {
+    liveIds.add(coin.id);
+    if (!coinMeshes.has(coin.id)) {
+      const mesh = new THREE.Mesh(coinGeo, coinMat);
+      mesh.position.set(coin.x, coin.y, coin.z);
+      mesh.rotation.x = Math.PI / 2;
+      coinMeshes.set(coin.id, mesh);
+      scene.add(mesh);
+    }
+  }
+  for (const [id, mesh] of coinMeshes) {
+    if (!liveIds.has(id)) {
+      scene.remove(mesh);
+      coinMeshes.delete(id);
+    }
+  }
+}
+
+function updateCoinSpin(t) {
+  for (const mesh of coinMeshes.values()) {
+    mesh.rotation.y = t * 2.4;
+  }
+}
+
+// ---- 배경 함선 — 순수 장식, 게임플레이에 관여하지 않음 (4절: "게임처럼 보임") ----
+const shipMeshes = new Map(); // segment index -> THREE.Group
+const SHIP_SPACING = 90; // m, 이 간격마다 한 척씩
+const SHIP_LOOKAHEAD = 260;
+const SHIP_DESPAWN_BEHIND = 120;
+
+function hashToUnit(n) {
+  const s = Math.sin(n * 12.9898) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+function buildShipMesh(seg) {
+  const side = hashToUnit(seg) < 0.5 ? -1 : 1;
+  const z = side * (34 + hashToUnit(seg + 0.5) * 30);
+  const scale = 0.8 + hashToUnit(seg + 0.25) * 0.7;
+
+  const group = new THREE.Group();
+  const hullMat = new THREE.MeshStandardMaterial({ color: 0x2c2420, roughness: 0.9 });
+  const sailMat = new THREE.MeshStandardMaterial({ color: 0xe9e2d0, roughness: 0.85 });
+
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(9, 2.2, 3), hullMat);
+  hull.position.y = 0.4;
+  group.add(hull);
+
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 7, 6), hullMat);
+  mast.position.y = 3.9;
+  group.add(mast);
+
+  const sail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 3.4, 2.2), sailMat);
+  sail.position.set(0, 4.2, 0);
+  group.add(sail);
+
+  group.scale.setScalar(scale);
+  group.position.set(seg * SHIP_SPACING + hashToUnit(seg) * 20, 0, z);
+  group.rotation.y = (hashToUnit(seg + 0.75) - 0.5) * 0.6;
+  return group;
+}
+
+function syncShipMeshes() {
+  const centerSeg = Math.floor(game.player.pos.x / SHIP_SPACING);
+  const span = Math.ceil(SHIP_LOOKAHEAD / SHIP_SPACING);
+  const liveSegs = new Set();
+  for (let s = centerSeg - 1; s <= centerSeg + span; s++) {
+    liveSegs.add(s);
+    if (!shipMeshes.has(s)) {
+      const mesh = buildShipMesh(s);
+      shipMeshes.set(s, mesh);
+      scene.add(mesh);
+    }
+  }
+  for (const [seg, mesh] of shipMeshes) {
+    if (!liveSegs.has(seg) || mesh.position.x < game.player.pos.x - SHIP_DESPAWN_BEHIND) {
+      scene.remove(mesh);
+      shipMeshes.delete(seg);
+    }
+  }
+}
+
 // ---- 조준 마커 & 팔(줄) ----
 const aimMarker = new THREE.Mesh(
   new THREE.TorusGeometry(0.9, 0.07, 8, 20),
@@ -241,12 +330,74 @@ window.addEventListener('keyup', (e) => {
 });
 window.addEventListener('mousedown', attemptAttach);
 window.addEventListener('mouseup', attemptRelease);
-window.addEventListener('touchstart', (e) => { attemptAttach(); e.preventDefault(); }, { passive: false });
-window.addEventListener('touchend', (e) => { attemptRelease(); e.preventDefault(); }, { passive: false });
 window.addEventListener('blur', () => {
   input.left = input.right = input.down = input.up = false;
   attemptRelease();
 });
+
+// ---- 터치: 화면 드래그로 카메라 좌우 둘러보기, 버튼은 따로 처리 ----
+// (탭=고무팔로 하면 "먼저 둘러보고 나서 건다"가 안 돼서, 조준은 드래그로만
+// 하고 고무팔은 전용 버튼으로 분리했다)
+function isTouchUiTarget(el) {
+  return !!(el && el.closest && el.closest('.touch-btn'));
+}
+let lookTouchId = null;
+let lookLastX = 0;
+const TOUCH_LOOK_SENSITIVITY = 0.006; // 라디안/px
+
+window.addEventListener('touchstart', (e) => {
+  if (game.state === 'dead') restart();
+  for (const t of e.changedTouches) {
+    if (isTouchUiTarget(t.target)) continue;
+    if (lookTouchId === null) {
+      lookTouchId = t.identifier;
+      lookLastX = t.clientX;
+    }
+  }
+  e.preventDefault();
+}, { passive: false });
+
+window.addEventListener('touchmove', (e) => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === lookTouchId) {
+      const dx = t.clientX - lookLastX;
+      lookLastX = t.clientX;
+      lookYaw = Physics.clamp(lookYaw + dx * TOUCH_LOOK_SENSITIVITY, -MAX_LOOK_YAW, MAX_LOOK_YAW);
+    }
+  }
+  e.preventDefault();
+}, { passive: false });
+
+window.addEventListener('touchend', (e) => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === lookTouchId) lookTouchId = null;
+  }
+}, { passive: false });
+
+// ---- 터치 버튼: 홀드형(D패드/고무팔)과 1회성(도약) ----
+function bindHoldButton(el, onDown, onUp) {
+  if (!el) return;
+  const down = (e) => { e.preventDefault(); e.stopPropagation(); onDown(); };
+  const up = (e) => { e.preventDefault(); e.stopPropagation(); onUp(); };
+  el.addEventListener('touchstart', down, { passive: false });
+  el.addEventListener('touchend', up, { passive: false });
+  el.addEventListener('touchcancel', up, { passive: false });
+  el.addEventListener('mousedown', down);
+  el.addEventListener('mouseup', up);
+  el.addEventListener('mouseleave', up);
+  el.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+bindHoldButton(document.getElementById('btn-left'), () => { input.left = true; }, () => { input.left = false; });
+bindHoldButton(document.getElementById('btn-right'), () => { input.right = true; }, () => { input.right = false; });
+bindHoldButton(document.getElementById('btn-down'), () => { input.down = true; }, () => { input.down = false; });
+bindHoldButton(document.getElementById('btn-up'), () => attemptJumpRelease(), () => {});
+bindHoldButton(document.getElementById('btn-grab'), attemptAttach, attemptRelease);
+
+// 터치 기기 판별 — 둘 중 하나만 보고 판단하면 외장 키보드가 붙은
+// 아이패드에서 pointer:fine으로 잡혀 터치 버튼이 숨어버릴 수 있음 (설계
+// 문서 10절 버그 #8), 그래서 둘 다 확인해서 하나라도 맞으면 켠다.
+const isTouchCapable = ('ontouchstart' in window) || navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches;
+if (isTouchCapable) document.body.classList.add('touch-capable');
 
 // ---- 게임 상태 ----
 let game = Physics.createGame({});
@@ -384,6 +535,9 @@ function animate() {
 
   player.position.set(game.player.pos.x, game.player.pos.y, game.player.pos.z);
   syncRingMeshes();
+  syncCoinMeshes();
+  syncShipMeshes();
+  updateCoinSpin(t);
 
   if (game.state === 'falling') {
     camera.getWorldDirection(camForward);

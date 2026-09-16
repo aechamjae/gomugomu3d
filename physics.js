@@ -80,6 +80,8 @@
 
   // ---- 고리 생성 (설계 문서 5절, 절차적 · 앞쪽으로 계속 채움) ----
   let nextRingId = 1;
+  let nextCoinId = 1;
+  const COIN_PICKUP_RADIUS = 1.3; // m
 
   function spawnNextRing(game) {
     const prev = game.rings[game.rings.length - 1];
@@ -105,7 +107,18 @@
     let z = prev.z + (game.rng() * 2 - 1) * zSpread;
     z = clamp(z, -RING_LANE_HALF_WIDTH, RING_LANE_HALF_WIDTH);
     const kind = game.rng() < 0.62 ? 'mast' : 'rock';
-    game.rings.push({ id: nextRingId++, x, y: Math.max(4, height), z, kind });
+    const y = Math.max(4, height);
+    game.rings.push({ id: nextRingId++, x, y, z, kind });
+
+    // 금화 — 고리 사이 구간마다 50% 확률로 1개, 두 고리 높이의 중간보다 약간 아래 (5절)
+    if (game.rng() < 0.5) {
+      game.coins.push({
+        id: nextCoinId++,
+        x: (prev.x + x) / 2,
+        y: Math.max(2, (prev.y + y) / 2 - 1.5),
+        z: (prev.z + z) / 2,
+      });
+    }
   }
 
   function ensureRingsAhead(game) {
@@ -117,6 +130,21 @@
     }
     while (game.rings.length && game.rings[0].x < game.player.pos.x - RING_DESPAWN_BEHIND) {
       game.rings.shift();
+    }
+    while (game.coins.length && game.coins[0].x < game.player.pos.x - RING_DESPAWN_BEHIND) {
+      game.coins.shift();
+    }
+  }
+
+  function collectCoins(game) {
+    const p = game.player.pos;
+    for (let i = game.coins.length - 1; i >= 0; i--) {
+      const c = game.coins[i];
+      const dx = c.x - p.x, dy = c.y - p.y, dz = c.z - p.z;
+      if (dx * dx + dy * dy + dz * dz <= COIN_PICKUP_RADIUS * COIN_PICKUP_RADIUS) {
+        game.coins.splice(i, 1);
+        game.treasure += 1;
+      }
     }
   }
 
@@ -176,6 +204,7 @@
       deathReason: null,
       rng: makeRng(opts.seed != null ? opts.seed : 1),
       rings: [],
+      coins: [],
       anchor: null,
       rest: 0,
       player: {
@@ -198,6 +227,7 @@
     if (game.state === 'dead') return game;
 
     ensureRingsAhead(game);
+    collectCoins(game);
 
     const p = game.player;
 

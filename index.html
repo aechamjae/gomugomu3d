@@ -38,6 +38,37 @@
   #status .msg { font-size: 20px; font-weight: 700; }
   #status .hint { font-size: 13px; opacity: .75; margin-top: 4px; }
   #status:empty { display: none; }
+
+  /* ---- 터치 조작 (모바일) ---- */
+  #touch-ui { display: none; }
+  body.touch-capable #touch-ui { display: block; }
+
+  .touch-pad {
+    position: fixed; bottom: max(18px, env(safe-area-inset-bottom));
+    z-index: 6; display: flex; gap: 10px; user-select: none; -webkit-user-select: none;
+  }
+  #touch-pad-left { left: max(14px, env(safe-area-inset-left)); align-items: flex-end; }
+  #touch-pad-right { right: max(14px, env(safe-area-inset-right)); align-items: center; }
+
+  .touch-btn {
+    display: flex; align-items: center; justify-content: center;
+    width: 62px; height: 62px; border-radius: 50%;
+    background: rgba(234, 246, 255, 0.16); border: 1.5px solid rgba(234, 246, 255, 0.4);
+    color: #eaf6ff; font-size: 24px; font-family: system-ui, sans-serif;
+    touch-action: none; -webkit-tap-highlight-color: transparent;
+  }
+  .touch-btn:active { background: rgba(234, 246, 255, 0.32); }
+  #btn-grab { width: 84px; height: 84px; font-size: 15px; font-weight: 700; }
+  #btn-up { margin-bottom: 8px; }
+
+  #rotate-notice { display: none; }
+  @media (orientation: portrait) and (pointer: coarse) {
+    body.touch-capable #rotate-notice {
+      display: flex; position: fixed; inset: 0; z-index: 20;
+      align-items: center; justify-content: center; text-align: center; padding: 24px;
+      background: #04121c; color: #eaf6ff; font-family: system-ui, sans-serif; font-size: 16px;
+    }
+  }
 </style>
 <script type="importmap">
 { "imports": { "three": "./three.module.js" } }
@@ -50,6 +81,18 @@
   <div class="stat">보물<span class="value" id="hud-treasure">0</span></div>
 </div>
 <div id="status"></div>
+<div id="touch-ui">
+  <div class="touch-pad" id="touch-pad-left">
+    <button type="button" class="touch-btn" id="btn-left" aria-label="왼쪽">◀</button>
+    <button type="button" class="touch-btn" id="btn-down" aria-label="감기/급강하">▼</button>
+    <button type="button" class="touch-btn" id="btn-right" aria-label="오른쪽">▶</button>
+  </div>
+  <div class="touch-pad" id="touch-pad-right" style="flex-direction: column;">
+    <button type="button" class="touch-btn" id="btn-up" aria-label="도약">▲</button>
+    <button type="button" class="touch-btn" id="btn-grab" aria-label="고무팔">팔</button>
+  </div>
+</div>
+<div id="rotate-notice">화면을 가로로 돌려주세요</div>
 <div id="boot">
   <div class="title">고무팔 3D</div>
   <div class="sub">불러오는 중…</div>
