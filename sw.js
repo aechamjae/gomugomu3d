@@ -1,6 +1,6 @@
 // sw.js — 오프라인 캐시. 코드를 고치면 CACHE_NAME의 버전을 반드시 올릴 것
 // (안 올리면 이미 설치한 사람에게 갱신이 안 감 — 설계 문서 10절 버그 #6).
-const CACHE_NAME = 'gomupal3d-v1';
+const CACHE_NAME = 'gomupal3d-v2';
 const CACHE_FILES = [
   './',
   './index.html',

@@ -373,7 +373,15 @@
           const ring = game.rings[i];
           if (ring.x > p.x && (!target || ring.x < target.x)) target = ring;
         }
-        if (target) game.rings.splice(game.rings.indexOf(target), 1);
+        if (target) {
+          game.rings.splice(game.rings.indexOf(target), 1);
+          // 지금 매달려 있는 그 고리를 끊으면 실제로 밧줄이 끊긴 것처럼
+          // 손을 놓쳐야 한다 — 안 그러면 고리는 화면에서 사라졌는데 계속
+          // 매달려 있는 것처럼 보이는 상태가 됨.
+          if (game.state === 'swinging' && game.anchor && game.anchor.id === target.id) {
+            release(game);
+          }
+        }
       }
     } else {
       // 심해의 크라켄 — 눈이 드러난 순간에만 통한다 (대형, HP 8)

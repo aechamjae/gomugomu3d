@@ -790,6 +790,10 @@ function animate() {
     accumulator -= FIXED_DT;
     steps++;
   }
+  // 지속적으로 느린 기기(프레임당 250ms는 안 넘지만 매번 8스텝 예산을 다
+  // 못 따라잡는 경우)에서 accumulator가 한도 없이 계속 쌓이면 영영 슬로모션
+  // 상태에서 못 벗어난다 — 남은 만큼은 버려서 실시간을 우선한다.
+  accumulator = Math.min(accumulator, FIXED_DT * MAX_STEPS_PER_FRAME);
 
   player.position.set(game.player.pos.x, game.player.pos.y, game.player.pos.z);
   syncRingMeshes();
