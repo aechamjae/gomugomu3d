@@ -71,6 +71,32 @@
   const MONSTER_HEIGHT = 13.6;       // m, 해수면 위로 솟는 높이
   const MONSTER_NECK_RADIUS = 2.4;   // m
 
+  // ---- 고무고무 피스톨 (4절: 원거리 공격, 재충전 5초) ----
+  const PISTOL_RANGE = 39.1;       // m (860px 환산)
+  const PISTOL_COOLDOWN = 5;       // 초
+  const PISTOL_CONE_DEG = 15;      // 히트스캔 판정 원뿔 반각 (조준 원뿔보다 좁게)
+  const PISTOL_CONE_COS = Math.cos(PISTOL_CONE_DEG * Math.PI / 180);
+
+  // ---- 보스 (5절: 500m마다 중간보스, 2000m마다 대형) ----
+  // 설계 문서는 공격 패턴과 약점만 한 줄로 정의하고 구체적인 수치는 안 줘서,
+  // 아래 타이머/속도 값은 전부 임시치 — 느낌 확인 후 조정 필요.
+  const BOSS_INTERVAL = 500;      // m
+  const BOSS_SPAWN_AHEAD = 34;    // m, 플레이어 앞쪽 이만큼에 스폰
+  const BOSS_HP = 2;
+  const KRAKEN_HP = 8;
+  const BOSS_HIT_RADIUS = 1.4;    // m, 약점 판정 반경
+  const BOSS_STAGGER_RADIUS = 3.2; // m, 보스 본체/공격에 닿았을 때 스턴 판정 반경
+  const DAGGER_PERIOD = 2.2;      // 초, 곡예사 선장 단검 발사 주기
+  const DAGGER_SPEED = 22;        // m/s
+  const DAGGER_FAN_COUNT = 3;
+  const HARPOONER_JUMP_PERIOD = 2.6; // 초
+  const HARPOONER_JUMP_HEIGHT = 4.5; // m
+  const GUNSHIP_DIVE_PERIOD = 4.0;   // 초 (한 주기 = 잠수+부상)
+  const GUNSHIP_DIVE_DEPTH = 6.0;    // m
+  const ROPECUTTER_CUT_PERIOD = 3.0; // 초
+  const KRAKEN_EYE_PERIOD = 4.0;     // 초
+  const KRAKEN_EYE_OPEN = 1.5;       // 초, 이 중 눈이 드러나는 시간
+
   const RING_LOOKAHEAD = 24;   // m, 플레이어 앞쪽 이 거리 안이면 다음 고리를 미리 스폰
   const RING_DESPAWN_BEHIND = 30; // m, 플레이어보다 이만큼 뒤처지면 제거
   const RING_DIFFICULTY_DISTANCE = 1500; // m, t=1이 되는 거리
@@ -103,6 +129,7 @@
   let nextRingId = 1;
   let nextCoinId = 1;
   let nextFishId = 1;
+  let nextProjectileId = 1;
   const COIN_PICKUP_RADIUS = 1.3; // m
 
   function spawnNextRing(game) {
@@ -260,6 +287,143 @@
     }
   }
 
+  // ---- 보스 (설계 문서 5절) ----
+  // 약점은 매 프레임 다시 계산한다(고정점 아님). 공격에 닿으면 즉사가 아니라
+  // 스턴만 준다 — 사망 조건은 1절에 명시된 것(바다/화면 밖/해왕류)뿐이라
+  // 보스 접촉으로 죽게 만들지 않았다.
+  function spawnBoss(game) {
+    // 대형(크라켄)은 2000m마다, 중간보스는 500m마다 — 두 주기가 서로 다른
+    // 카운터라 "몇 번째로 처치했나"만으로 슬롯을 나누면 특정 중간보스
+    // 타입이 영영 안 나오는 경우가 생겨서, 대형 여부와 중간보스 순환을
+    // 따로 관리한다.
+    const grandTier = Math.floor(game.distance / 2000);
+    const isGrand = grandTier > game.grandTier;
+    let type;
+    if (isGrand) {
+      type = 4;
+      game.grandTier = grandTier;
+    } else {
+      type = game.midBossCycle % 4;
+      game.midBossCycle += 1;
+    }
+    const x = game.player.pos.x + BOSS_SPAWN_AHEAD;
+    const hp = type === 4 ? KRAKEN_HP : BOSS_HP;
+    game.boss = {
+      type, x, z: 0, hp, maxHp: hp, t: 0,
+      attackTimer: type === 0 ? DAGGER_PERIOD : ROPECUTTER_CUT_PERIOD,
+      weak: { x, y: 3, z: 0, vulnerable: true },
+    };
+  }
+
+  function updateBoss(game, dt) {
+    if (!game.boss && game.distance >= game.nextBossAt) spawnBoss(game);
+    const boss = game.boss;
+    if (!boss) return;
+    boss.t += dt;
+    const p = game.player.pos;
+
+    if (boss.type === 0) {
+      // 곡예사 선장 — 본체가 곧 약점, 주기적으로 단검을 부채꼴로 던진다
+      boss.weak = { x: boss.x, y: 3, z: boss.z, vulnerable: true };
+      boss.attackTimer -= dt;
+      if (boss.attackTimer <= 0) {
+        boss.attackTimer = DAGGER_PERIOD;
+        for (let i = 0; i < DAGGER_FAN_COUNT; i++) {
+          const spread = (i - (DAGGER_FAN_COUNT - 1) / 2) * 0.35;
+          game.projectiles.push({
+            id: nextProjectileId++,
+            x: boss.x, y: boss.weak.y, z: boss.z,
+            vx: -DAGGER_SPEED * Math.cos(spread),
+            vy: 0,
+            vz: DAGGER_SPEED * Math.sin(spread),
+            life: 3,
+          });
+        }
+      }
+    } else if (boss.type === 1) {
+      // 작살잡이 — 공중에 뜬 순간이 빈틈
+      const phase = (boss.t % HARPOONER_JUMP_PERIOD) / HARPOONER_JUMP_PERIOD;
+      const jumpY = Math.max(0, Math.sin(phase * Math.PI)) * HARPOONER_JUMP_HEIGHT;
+      boss.weak = { x: boss.x, y: 2 + jumpY, z: boss.z, vulnerable: jumpY > HARPOONER_JUMP_HEIGHT * 0.5 };
+    } else if (boss.type === 2) {
+      // 포함 흑조호 — 돛대 위 화약통이 약점, 잠수 중엔 무적.
+      // 잠수 속도를 고정값으로 두면 빠른 플레이어를 못 따라온다 (2D 버그 #3) —
+      // 플레이어 속도 기반으로 따라잡는다.
+      const speed = Math.max(17, vecLen(game.player.vel) + 7);
+      const phase = (boss.t % GUNSHIP_DIVE_PERIOD) / GUNSHIP_DIVE_PERIOD;
+      const diveY = phase < 0.5 ? -GUNSHIP_DIVE_DEPTH * Math.sin(phase * Math.PI * 2) : 0;
+      boss.diveOffsetY = diveY;
+      boss.weak = { x: boss.x, y: 9 + diveY, z: boss.z, vulnerable: diveY > -0.5 };
+      const targetX = p.x + BOSS_SPAWN_AHEAD * 0.6;
+      if (boss.x < targetX) boss.x = Math.min(targetX, boss.x + speed * dt);
+    } else if (boss.type === 3) {
+      // 밧줄 끊는 자 — 본체가 곧 약점, 주기적으로 앞쪽 고리를 끊어 놓는다
+      boss.weak = { x: boss.x, y: 3, z: boss.z, vulnerable: true };
+      boss.attackTimer -= dt;
+      if (boss.attackTimer <= 0) {
+        boss.attackTimer = ROPECUTTER_CUT_PERIOD;
+        let target = null;
+        for (let i = 0; i < game.rings.length; i++) {
+          const ring = game.rings[i];
+          if (ring.x > p.x && (!target || ring.x < target.x)) target = ring;
+        }
+        if (target) game.rings.splice(game.rings.indexOf(target), 1);
+      }
+    } else {
+      // 심해의 크라켄 — 눈이 드러난 순간에만 통한다 (대형, HP 8)
+      const phase = boss.t % KRAKEN_EYE_PERIOD;
+      boss.weak = { x: boss.x, y: 7, z: boss.z, vulnerable: phase < KRAKEN_EYE_OPEN };
+    }
+
+    const dxp = boss.x - p.x, dyp = boss.weak.y - p.y, dzp = boss.z - p.z;
+    if (dxp * dxp + dyp * dyp + dzp * dzp <= BOSS_STAGGER_RADIUS * BOSS_STAGGER_RADIUS) {
+      game.stunTimer = Math.max(game.stunTimer, FISH_STUN_DURATION);
+    }
+
+    if (boss.hp <= 0) {
+      game.boss = null;
+      game.bossesDefeated += 1;
+      game.nextBossAt = game.distance + BOSS_INTERVAL;
+    } else if (boss.x < p.x - 50) {
+      // 안전장치: 뒤에 놓쳤으면 치우고 다음 보스를 다시 잡는다
+      game.boss = null;
+      game.nextBossAt = game.distance + BOSS_INTERVAL;
+    }
+  }
+
+  function updateProjectiles(game, dt) {
+    const p = game.player.pos;
+    for (let i = game.projectiles.length - 1; i >= 0; i--) {
+      const pr = game.projectiles[i];
+      pr.x += pr.vx * dt; pr.y += pr.vy * dt; pr.z += pr.vz * dt;
+      pr.life -= dt;
+      const dx = pr.x - p.x, dy = pr.y - p.y, dz = pr.z - p.z;
+      if (dx * dx + dy * dy + dz * dz <= 0.7 * 0.7) {
+        game.stunTimer = Math.max(game.stunTimer, FISH_STUN_DURATION);
+        game.projectiles.splice(i, 1);
+        continue;
+      }
+      if (pr.life <= 0 || pr.x < p.x - 30) game.projectiles.splice(i, 1);
+    }
+  }
+
+  // forward: {x,y,z} — 조준 방향. 쿨다운 중이 아니면 소모하고, 보스 약점이
+  // 사거리·원뿔 안에서 드러나 있으면 1 데미지를 준다.
+  function firePistol(game, forward) {
+    if (game.pistolCooldown > 0) return false;
+    game.pistolCooldown = PISTOL_COOLDOWN;
+    if (!game.boss || !game.boss.weak.vulnerable) return false;
+    const p = game.player.pos;
+    const w = game.boss.weak;
+    const to = { x: w.x - p.x, y: w.y - p.y, z: w.z - p.z };
+    const dist = vecLen(to);
+    if (dist > PISTOL_RANGE || dist < 1e-6) return false;
+    const cos = vecDot(vecScale(to, 1 / dist), vecNorm(forward));
+    if (cos < PISTOL_CONE_COS) return false;
+    game.boss.hp -= 1;
+    return true;
+  }
+
   // forward: {x,y,z} 정규화된 조준 방향 (렌더러가 카메라 기준으로 넘겨줌;
   // 카메라 좌우 둘러보기가 없다면 월드 +X를 그대로 써도 된다)
   function pickTarget(game, forward) {
@@ -321,6 +485,13 @@
       monster: null,
       lastMonsterX: null,
       stunTimer: 0,
+      boss: null,
+      nextBossAt: BOSS_INTERVAL,
+      bossesDefeated: 0,
+      midBossCycle: 0,
+      grandTier: 0,
+      projectiles: [],
+      pistolCooldown: 0,
       anchor: null,
       rest: 0,
       player: {
@@ -346,8 +517,11 @@
     collectCoins(game);
     resolveFishCollisions(game);
     resolveMonster(game);
+    updateBoss(game, dt);
+    updateProjectiles(game, dt);
     if (game.state === 'dead') return game;
 
+    if (game.pistolCooldown > 0) game.pistolCooldown = Math.max(0, game.pistolCooldown - dt);
     if (game.stunTimer > 0) game.stunTimer = Math.max(0, game.stunTimer - dt);
     const stunned = game.stunTimer > 0; // 식인 물고기에 맞으면 잠깐 조작 무시 (5절)
 
@@ -446,8 +620,9 @@
     ZIP_REEL, FORWARD_ACCEL, PILLAR_RADIUS,
     LANE_HALF_WIDTH, RING_LANE_HALF_WIDTH, PLAYER_RADIUS, MAX_DT, AIM_CONE_DEG,
     FISH_RADIUS, MONSTER_HEIGHT, MONSTER_NECK_RADIUS, MONSTER_WARN_AHEAD, MONSTER_RISE_AHEAD,
+    PISTOL_RANGE, PISTOL_COOLDOWN, BOSS_HIT_RADIUS,
     vecAdd, vecSub, vecScale, vecLen, vecNorm, vecDot, clamp, makeRng,
-    pickTarget, tryAttach, release,
+    pickTarget, tryAttach, release, firePistol,
     createGame, step,
   };
 });

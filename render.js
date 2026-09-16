@@ -341,6 +341,158 @@ function updateMonster() {
   monsterGroup.position.set(m.x, 0, m.z);
 }
 
+// ---- 보스 (5절: 500m마다 중간보스, 2000m마다 대형) ----
+const BOSS_COLORS = [0x8a2e2e, 0x2e4a8a, 0x3a3a3a, 0x4a2e6a, 0x1f3d2b];
+const BOSS_NAMES = ['곡예사 선장', '작살잡이', '포함 흑조호', '밧줄 끊는 자', '심해의 크라켄'];
+
+function buildHumanBoss(type) {
+  const group = new THREE.Group();
+  const skin = new THREE.MeshStandardMaterial({ color: 0xffc98e, roughness: 0.6 });
+  const cloth = new THREE.MeshStandardMaterial({ color: BOSS_COLORS[type], roughness: 0.6 });
+
+  const torso = new THREE.Mesh(new THREE.SphereGeometry(0.9, 12, 10), cloth);
+  torso.scale.set(1, 1.3, 1);
+  torso.position.y = 2.4;
+  group.add(torso);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.55, 12, 10), skin);
+  head.position.y = 3.6;
+  group.add(head);
+
+  if (type === 0) {
+    const raft = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.3, 2.2), new THREE.MeshStandardMaterial({ color: 0x5a3d24 }));
+    raft.position.y = 0.3;
+    group.add(raft);
+  } else if (type === 1) {
+    const spear = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.6, 6), skin);
+    spear.rotation.z = Math.PI / 2.5;
+    spear.position.set(0.9, 2.8, 0);
+    group.add(spear);
+  } else if (type === 3) {
+    const blade = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.9, 4), new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.6, roughness: 0.4 }));
+    blade.rotation.z = Math.PI;
+    blade.position.set(0.8, 2.8, 0);
+    group.add(blade);
+  }
+  return group;
+}
+
+function buildGunshipBoss() {
+  const group = new THREE.Group();
+  const hullMat = new THREE.MeshStandardMaterial({ color: BOSS_COLORS[2], roughness: 0.85 });
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(7, 3, 3.4), hullMat);
+  hull.position.y = 1.2;
+  group.add(hull);
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 8, 8), hullMat);
+  mast.position.y = 6.7;
+  group.add(mast);
+  const keg = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.5, 0.5, 0.7, 10),
+    new THREE.MeshStandardMaterial({ color: 0x6b4a30, roughness: 0.8 })
+  );
+  keg.position.y = 9;
+  keg.name = 'keg';
+  group.add(keg);
+  return group;
+}
+
+function buildKrakenBoss() {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: BOSS_COLORS[4], roughness: 0.75 });
+  const body = new THREE.Mesh(new THREE.SphereGeometry(3, 14, 12), mat);
+  body.position.y = 4;
+  group.add(body);
+  for (let i = 0; i < 6; i++) {
+    const ang = (i / 6) * Math.PI * 2;
+    const tentacle = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.55, 5, 6), mat);
+    tentacle.position.set(Math.cos(ang) * 2.4, 1.2, Math.sin(ang) * 2.4);
+    tentacle.rotation.z = Math.cos(ang) * 0.6;
+    tentacle.rotation.x = Math.sin(ang) * 0.6;
+    group.add(tentacle);
+  }
+  return group;
+}
+
+function buildBossMesh(type) {
+  if (type === 2) return buildGunshipBoss();
+  if (type === 4) return buildKrakenBoss();
+  return buildHumanBoss(type);
+}
+
+let bossMeshGroup = null;
+let bossType = null;
+
+const bossWeakMarker = new THREE.Mesh(
+  new THREE.SphereGeometry(0.45, 12, 10),
+  new THREE.MeshBasicMaterial({ color: 0x5cff7a })
+);
+bossWeakMarker.visible = false;
+scene.add(bossWeakMarker);
+
+// HP 바 — 항상 카메라를 향하는 두 겹 판
+const hpBarBg = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 0.28), new THREE.MeshBasicMaterial({ color: 0x1a1a1a }));
+const hpBarFg = new THREE.Mesh(new THREE.PlaneGeometry(2.3, 0.18), new THREE.MeshBasicMaterial({ color: 0xff5a3c }));
+hpBarFg.position.z = 0.01;
+const hpBarGroup = new THREE.Group();
+hpBarGroup.add(hpBarBg, hpBarFg);
+hpBarGroup.visible = false;
+scene.add(hpBarGroup);
+
+function updateBoss() {
+  const boss = game.boss;
+  if (!boss) {
+    if (bossMeshGroup) bossMeshGroup.visible = false;
+    bossWeakMarker.visible = false;
+    hpBarGroup.visible = false;
+    return;
+  }
+  if (bossType !== boss.type) {
+    if (bossMeshGroup) scene.remove(bossMeshGroup);
+    bossMeshGroup = buildBossMesh(boss.type);
+    scene.add(bossMeshGroup);
+    bossType = boss.type;
+  }
+  bossMeshGroup.visible = true;
+  const bodyY = boss.type === 2 ? (boss.diveOffsetY || 0) : 0;
+  bossMeshGroup.position.set(boss.x, bodyY, boss.z);
+
+  bossWeakMarker.visible = true;
+  bossWeakMarker.position.set(boss.weak.x, boss.weak.y, boss.weak.z);
+  bossWeakMarker.material.color.set(boss.weak.vulnerable ? 0x5cff7a : 0x555555);
+
+  hpBarGroup.visible = true;
+  hpBarGroup.position.set(boss.x, boss.type === 4 ? 9.5 : 5, boss.z);
+  hpBarGroup.quaternion.copy(camera.quaternion);
+  hpBarFg.scale.x = Math.max(0, boss.hp / boss.maxHp);
+  hpBarFg.position.x = -(1 - hpBarFg.scale.x) * 1.15;
+}
+
+// ---- 보스 투사체(단검) ----
+const projectileMeshes = new Map();
+const daggerGeo = new THREE.ConeGeometry(0.12, 0.7, 6);
+const daggerMat = new THREE.MeshStandardMaterial({ color: 0xd8d8d8, metalness: 0.7, roughness: 0.3 });
+
+function syncProjectileMeshes() {
+  const liveIds = new Set();
+  for (const pr of game.projectiles) {
+    liveIds.add(pr.id);
+    let mesh = projectileMeshes.get(pr.id);
+    if (!mesh) {
+      mesh = new THREE.Mesh(daggerGeo, daggerMat);
+      projectileMeshes.set(pr.id, mesh);
+      scene.add(mesh);
+    }
+    mesh.position.set(pr.x, pr.y, pr.z);
+    mesh.rotation.z = Math.PI / 2 + Math.atan2(pr.vy, pr.vx);
+    mesh.rotation.y = -Math.atan2(pr.vz, pr.vx);
+  }
+  for (const [id, mesh] of projectileMeshes) {
+    if (!liveIds.has(id)) {
+      scene.remove(mesh);
+      projectileMeshes.delete(id);
+    }
+  }
+}
+
 // ---- 조준 마커 & 팔(줄) ----
 const aimMarker = new THREE.Mesh(
   new THREE.TorusGeometry(0.9, 0.07, 8, 20),
@@ -373,11 +525,18 @@ function attemptAttach() {
 function attemptRelease() {
   Physics.release(game);
 }
+// 고무고무 피스톨 (4절: F/E/Shift, 재충전 5초)
+function firePistolAction() {
+  if (game.state === 'dead') return;
+  camera.getWorldDirection(camForward);
+  Physics.firePistol(game, { x: camForward.x, y: camForward.y, z: camForward.z });
+}
 
 window.addEventListener('keydown', (e) => {
   if (KEY_MAP[e.key]) { input[KEY_MAP[e.key]] = true; e.preventDefault(); }
   if (e.key === 'r' || e.key === 'R') restart();
   if (e.code === 'Space') { attemptAttach(); e.preventDefault(); }
+  if (e.key === 'f' || e.key === 'F' || e.key === 'e' || e.key === 'E' || e.key === 'Shift') firePistolAction();
 });
 window.addEventListener('keyup', (e) => {
   if (KEY_MAP[e.key]) { input[KEY_MAP[e.key]] = false; e.preventDefault(); }
@@ -447,6 +606,7 @@ bindHoldButton(document.getElementById('btn-right'), () => { input.right = true;
 bindHoldButton(document.getElementById('btn-down'), () => { input.down = true; }, () => { input.down = false; });
 bindHoldButton(document.getElementById('btn-up'), () => { input.up = true; }, () => { input.up = false; });
 bindHoldButton(document.getElementById('btn-grab'), attemptAttach, attemptRelease);
+bindHoldButton(document.getElementById('btn-pistol'), firePistolAction, () => {});
 
 // 터치 기기 판별 — 둘 중 하나만 보고 판단하면 외장 키보드가 붙은
 // 아이패드에서 pointer:fine으로 잡혀 터치 버튼이 숨어버릴 수 있음 (설계
@@ -459,6 +619,20 @@ let game = Physics.createGame({});
 
 const hudDistance = document.getElementById('hud-distance');
 const hudTreasure = document.getElementById('hud-treasure');
+const hudPistol = document.getElementById('hud-pistol');
+
+// ---- 최고 기록 저장 — window.storage 우선, 없으면 localStorage (6절) ----
+const BEST_KEY = 'gomupal3d_best_distance';
+function getStorage() {
+  try { if (window.storage) return window.storage; } catch (e) { /* noop */ }
+  try { return window.localStorage; } catch (e) { return null; }
+}
+const persist = getStorage();
+let bestDistance = 0;
+try {
+  bestDistance = (persist && parseFloat(persist.getItem(BEST_KEY))) || 0;
+} catch (e) { /* noop */ }
+let bestJustUpdated = false;
 const statusEl = document.getElementById('status');
 
 function restart() {
@@ -466,14 +640,30 @@ function restart() {
   ringMeshes.clear();
   game = Physics.createGame({});
   statusEl.innerHTML = '';
+  bestJustUpdated = false;
 }
 
 function updateHud() {
   hudDistance.textContent = Math.max(0, Math.round(game.distance)) + 'm';
   hudTreasure.textContent = String(game.treasure);
+  if (game.pistolCooldown > 0) {
+    hudPistol.textContent = '피스톨 ' + game.pistolCooldown.toFixed(1) + 's';
+    hudPistol.classList.add('pistol-cooling');
+  } else {
+    hudPistol.textContent = '피스톨 준비됨';
+    hudPistol.classList.remove('pistol-cooling');
+  }
   if (game.state === 'dead') {
+    if (!bestJustUpdated) {
+      bestJustUpdated = true;
+      if (game.distance > bestDistance) {
+        bestDistance = game.distance;
+        try { if (persist) persist.setItem(BEST_KEY, String(bestDistance)); } catch (e) { /* noop */ }
+      }
+    }
     const msg = game.deathReason === 'monster' ? '해왕류에게 붙잡혔다!' : '풍덩!';
-    statusEl.innerHTML = `<div class="msg">${msg}</div><div class="hint">Space/클릭/터치로 다시 시작</div>`;
+    const best = '최고 기록 ' + Math.round(bestDistance) + 'm';
+    statusEl.innerHTML = `<div class="msg">${msg}</div><div class="hint">${best} · Space/클릭/터치로 다시 시작</div>`;
   } else if (game.monster && game.monster.warned && !game.monster.risen) {
     statusEl.innerHTML = '<div class="msg warn">전방에 해왕류 출현!</div>';
   } else {
@@ -607,6 +797,8 @@ function animate() {
   syncShipMeshes();
   syncFishMeshes(t);
   updateMonster();
+  updateBoss();
+  syncProjectileMeshes();
   updateCoinSpin(t);
 
   if (game.state === 'falling') {
@@ -641,3 +833,9 @@ function animate() {
 
 boot.classList.add('hidden');
 animate();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}

@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>고무팔 3D</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<!-- iOS는 data URI apple-touch-icon을 무시해서 실제 파일로 참조 (설계 문서 10절 버그 #5) -->
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="theme-color" content="#04121c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
 <style>
   :root { color-scheme: dark; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -30,6 +38,8 @@
   }
   #hud .stat { font-size: 13px; opacity: .8; line-height: 1.4; }
   #hud .stat .value { font-size: 22px; font-weight: 700; display: block; }
+  #hud-pistol { font-size: 11px; display: block; margin-top: 2px; opacity: .8; }
+  #hud-pistol.pistol-cooling { color: #ffb37a; }
   #status {
     position: fixed; left: 50%; bottom: 14%; transform: translateX(-50%);
     z-index: 5; text-align: center; font-family: system-ui, -apple-system, sans-serif;
@@ -80,7 +90,10 @@
 <div id="app"></div>
 <div id="hud">
   <div class="stat">거리<span class="value" id="hud-distance">0m</span></div>
-  <div class="stat">보물<span class="value" id="hud-treasure">0</span></div>
+  <div class="stat" style="text-align:right;">
+    보물<span class="value" id="hud-treasure">0</span>
+    <span id="hud-pistol" class="pistol-ready">피스톨 준비됨</span>
+  </div>
 </div>
 <div id="status"></div>
 <div id="touch-ui">
@@ -88,6 +101,7 @@
     <button type="button" class="touch-btn" id="btn-left" aria-label="왼쪽">◀</button>
     <button type="button" class="touch-btn" id="btn-down" aria-label="감기/급강하">▼</button>
     <button type="button" class="touch-btn" id="btn-right" aria-label="오른쪽">▶</button>
+    <button type="button" class="touch-btn" id="btn-pistol" aria-label="피스톨">총</button>
   </div>
   <div class="touch-pad" id="touch-pad-right" style="flex-direction: column;">
     <button type="button" class="touch-btn" id="btn-up" aria-label="전진 가속">▲</button>
