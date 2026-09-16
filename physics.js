@@ -140,12 +140,14 @@
       // 안에 들어오도록 고도차를 완만하게 잡는다 — 카메라가 플레이어와 거의
       // 수평으로 정렬돼 있어서 너무 가파르게 위에 두면 아예 조준이 안 된다.
       // 시작 연출 자체는 section 12 미정 항목, 임시 처리.
-      game.rings.push({ id: nextRingId++, x: 12, y: 14.5, z: 0, kind: 'mast' });
+      // 기둥 높이를 높여 물에 너무 가깝게 스윙하지 않도록 여유를 더 준다
+      // (실제 플레이 피드백: 첫 기둥에서 진행이 막힘).
+      game.rings.push({ id: nextRingId++, x: 12, y: 16.5, z: 0, kind: 'mast' });
       return;
     }
     const t = clamp(game.distance / RING_DIFFICULTY_DISTANCE, 0, 1);
     const spacing = Math.min(15.5, (8.0 + t * 4.7) + game.rng() * (2.8 + t * 1.2));
-    const baseHeight = 9.9 + t * 5.4;
+    const baseHeight = 12.0 + t * 5.4;
     const wobble = (game.rng() * 2 - 1) * 2.2;
     const height = baseHeight * 0.68 + prev.y * 0.32 + wobble;
     const x = prev.x + spacing;
@@ -224,6 +226,10 @@
     const vel = game.player.vel;
     for (let i = 0; i < game.rings.length; i++) {
       const ring = game.rings[i];
+      // 지금 매달려 있는 고리 자신의 기둥과는 충돌시키지 않는다 — 걸쇠가
+      // 바로 그 기둥 위에 달려 있어서, 예외를 안 두면 밑으로 스윙하는
+      // 순간 자기 기둥에 막혀 첫 기둥부터 전진이 안 됨 (실제 플레이 피드백).
+      if (game.state === 'swinging' && game.anchor && game.anchor.id === ring.id) continue;
       if (pos.y > ring.y + 2) continue;
       const r = (PILLAR_RADIUS[ring.kind] || 0.4) + PLAYER_RADIUS;
       const dx = pos.x - ring.x;
@@ -367,7 +373,15 @@
           const ring = game.rings[i];
           if (ring.x > p.x && (!target || ring.x < target.x)) target = ring;
         }
-        if (target) game.rings.splice(game.rings.indexOf(target), 1);
+        if (target) {
+          game.rings.splice(game.rings.indexOf(target), 1);
+          // 지금 매달려 있는 그 고리를 끊으면 실제로 밧줄이 끊긴 것처럼
+          // 손을 놓쳐야 한다 — 안 그러면 고리는 화면에서 사라졌는데 계속
+          // 매달려 있는 것처럼 보이는 상태가 됨.
+          if (game.state === 'swinging' && game.anchor && game.anchor.id === target.id) {
+            release(game);
+          }
+        }
       }
     } else {
       // 심해의 크라켄 — 눈이 드러난 순간에만 통한다 (대형, HP 8)
@@ -451,7 +465,7 @@
     const dist = vecLen(vecSub(ring, game.player.pos));
     if (dist > REACH) return false;
     game.state = 'swinging';
-    game.anchor = { x: ring.x, y: ring.y, z: ring.z };
+    game.anchor = { id: ring.id, x: ring.x, y: ring.y, z: ring.z };
     game.rest = dist;
     return true;
   }
