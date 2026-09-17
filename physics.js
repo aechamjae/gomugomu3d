@@ -51,8 +51,6 @@
 
   const AIM_CONE_DEG = 35;                                  // 조준 원뿔 반각
   const AIM_CONE_COS = Math.cos(AIM_CONE_DEG * Math.PI / 180);
-  const AIM_WEIGHT_ANGLE = 0.6;
-  const AIM_WEIGHT_DIST = 0.4;
 
   // ---- 잡몹 (설계 문서 5절) ----
   const FISH_MIN_DISTANCE = 90;      // m, 이 이후부터 출현
@@ -444,7 +442,7 @@
     const p = game.player.pos;
     const fwd = vecNorm(forward);
     let best = null;
-    let bestScore = Infinity;
+    let bestDist = Infinity;
     for (let i = 0; i < game.rings.length; i++) {
       const ring = game.rings[i];
       if (ring.x <= p.x) continue;
@@ -453,9 +451,11 @@
       if (dist > REACH || dist < 1e-6) continue;
       const cos = vecDot(vecScale(toRing, 1 / dist), fwd);
       if (cos < AIM_CONE_COS) continue;
-      const angle = Math.acos(clamp(cos, -1, 1));
-      const score = (angle / (AIM_CONE_DEG * Math.PI / 180)) * AIM_WEIGHT_ANGLE + (dist / REACH) * AIM_WEIGHT_DIST;
-      if (score < bestScore) { bestScore = score; best = ring; }
+      // 원뿔 안에서는 화면 중앙 정렬보다 거리(가장 가까운 고리)를 우선한다 —
+      // 각도로 고르면 다음 고리보다 화면 중앙에 더 잘 맞는 다다음 고리를
+      // 대신 잡아버려서 밧줄이 필요 이상으로 길어지고, 그대로 스윙하다
+      // 바다에 빠지는 문제가 있었음 (실제 플레이 피드백).
+      if (dist < bestDist) { bestDist = dist; best = ring; }
     }
     return best;
   }
