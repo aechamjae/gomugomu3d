@@ -138,14 +138,16 @@
       // 안에 들어오도록 고도차를 완만하게 잡는다 — 카메라가 플레이어와 거의
       // 수평으로 정렬돼 있어서 너무 가파르게 위에 두면 아예 조준이 안 된다.
       // 시작 연출 자체는 section 12 미정 항목, 임시 처리.
-      // 기둥 높이를 높여 물에 너무 가깝게 스윙하지 않도록 여유를 더 준다
-      // (실제 플레이 피드백: 첫 기둥에서 진행이 막힘).
-      game.rings.push({ id: nextRingId++, x: 12, y: 16.5, z: 0, kind: 'mast' });
+      // 기둥 높이를 14.5m보다 높이면 위쪽 안내 주석대로 조준 원뿔을 벗어나
+      // 시작하자마자 첫 고리를 아예 못 잡는 문제가 생긴다 (실제 플레이
+      // 피드백) — 첫 기둥이 막히는 문제는 자기 기둥과 충돌하던 버그였고
+      // 이미 고쳤으므로, 높이는 원래 값으로 되돌린다.
+      game.rings.push({ id: nextRingId++, x: 12, y: 14.5, z: 0, kind: 'mast' });
       return;
     }
     const t = clamp(game.distance / RING_DIFFICULTY_DISTANCE, 0, 1);
     const spacing = Math.min(15.5, (8.0 + t * 4.7) + game.rng() * (2.8 + t * 1.2));
-    const baseHeight = 12.0 + t * 5.4;
+    const baseHeight = 9.9 + t * 5.4;
     const wobble = (game.rng() * 2 - 1) * 2.2;
     const height = baseHeight * 0.68 + prev.y * 0.32 + wobble;
     const x = prev.x + spacing;
